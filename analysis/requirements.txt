@@ -6,6 +6,7 @@ numpy
 scipy
 matplotlib
 dtw-python
+lightglue @ git+https://github.com/cvg/LightGlue.git
 transformers>=4.57
 accelerate
 fastapi
