@@ -1,0 +1,13 @@
+opencv-python
+torch
+torchvision
+timm
+numpy
+scipy
+matplotlib
+dtw-python
+transformers>=4.57
+accelerate
+fastapi
+uvicorn[standard]
+python-multipart

@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vid-Sync Viewer</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #111; color: #eee; font-family: system-ui, sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100vh;
+  }
+
+  /* ── Setup panel ─────────────────────────────────────── */
+  #setup-panel {
+    margin-top: 15vh; text-align: center;
+  }
+  #setup-panel h1 { font-size: 1.5rem; margin-bottom: 1.5rem; }
+  .file-row {
+    display: flex; align-items: center; gap: 0.75rem;
+    margin-bottom: 0.75rem; justify-content: flex-end;
+  }
+  .file-row label { min-width: 6rem; text-align: right; font-size: 0.9rem; }
+  .file-row input { font-size: 0.85rem; }
+  .check { color: #4c4; margin-left: 0.25rem; display: none; }
+  .check.done { display: inline; }
+
+  /* ── Player panel ────────────────────────────────────── */
+  #player-panel {
+    display: none; flex-direction: column; align-items: center;
+    width: 100%; max-width: 960px; padding: 0.5rem;
+  }
+  #player-panel.active { display: flex; }
+
+  .video-container {
+    position: relative; width: 100%;
+  }
+  .video-container video {
+    width: 100%; display: block; object-fit: contain;
+    background: #000;
+  }
+  .rider-label {
+    position: absolute; top: 0.4rem; left: 0.6rem;
+    background: rgba(0,0,0,0.55); color: #fff;
+    padding: 0.15rem 0.5rem; border-radius: 3px;
+    font-size: 0.85rem; min-width: 2rem;
+    outline: none;
+  }
+  .rider-label:focus { background: rgba(0,0,0,0.8); }
+
+  /* ── Delta overlay ───────────────────────────────────── */
+  #delta-overlay {
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-size: 1.1rem; font-weight: 600;
+    padding: 0.2rem 0.75rem; border-radius: 999px;
+    margin: 0.3rem 0; text-align: center;
+    min-width: 7rem;
+  }
+  #delta-overlay.positive { background: #1a3a1a; color: #4caf50; }
+  #delta-overlay.negative { background: #3a1a1a; color: #ef5350; }
+  #delta-overlay.zero     { background: #2a2a2a; color: #999; }
+
+  /* ── Controls ────────────────────────────────────────── */
+  #controls {
+    display: flex; align-items: center; gap: 0.6rem;
+    width: 100%; padding: 0.5rem 0; flex-wrap: wrap;
+  }
+  #play-btn {
+    background: #333; color: #eee; border: 1px solid #555;
+    border-radius: 4px; padding: 0.3rem 0.8rem; cursor: pointer;
+    font-size: 0.9rem; min-width: 3rem;
+  }
+  #play-btn:hover { background: #444; }
+  #scrub-bar { flex: 1; min-width: 120px; cursor: pointer; }
+  #time-display { font-family: monospace; font-size: 0.85rem; white-space: nowrap; }
+  #speed-select {
+    background: #333; color: #eee; border: 1px solid #555;
+    border-radius: 4px; padding: 0.2rem 0.3rem; font-size: 0.85rem;
+  }
+
+  /* ── Delta graph ─────────────────────────────────────── */
+  #delta-graph {
+    width: 100%; height: 64px;
+    border-radius: 4px; margin-bottom: 0.25rem;
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Setup ──────────────────────────────────────────── -->
+<div id="setup-panel">
+  <h1>Vid-Sync Viewer</h1>
+  <div class="file-row">
+    <label>Video 1 (top):</label>
+    <input type="file" id="input-vid1" accept="video/*">
+    <span class="check" id="check-vid1">&#10003;</span>
+  </div>
+  <div class="file-row">
+    <label>Video 2 (bottom):</label>
+    <input type="file" id="input-vid2" accept="video/*">
+    <span class="check" id="check-vid2">&#10003;</span>
+  </div>
+  <div class="file-row">
+    <label>Delta CSV:</label>
+    <input type="file" id="input-csv" accept=".csv,text/csv">
+    <span class="check" id="check-csv">&#10003;</span>
+  </div>
+</div>
+
+<!-- ── Player ─────────────────────────────────────────── -->
+<div id="player-panel">
+  <div class="video-container">
+    <video id="vid1" muted playsinline preload="auto"></video>
+    <div class="rider-label" id="label-vid1" contenteditable="true">Rider 1</div>
+  </div>
+  <div id="delta-overlay" class="zero">+0.00s</div>
+  <div class="video-container">
+    <video id="vid2" muted playsinline preload="auto"></video>
+    <div class="rider-label" id="label-vid2" contenteditable="true">Rider 2</div>
+  </div>
+  <canvas id="delta-graph"></canvas>
+  <div id="controls">
+    <button id="play-btn">&#9654;</button>
+    <input type="range" id="scrub-bar" min="0" max="1000" value="0" step="1">
+    <span id="time-display">0:00 / 0:00</span>
+    <select id="speed-select">
+      <option value="0.25">0.25x</option>
+      <option value="0.5">0.5x</option>
+      <option value="1" selected>1x</option>
+      <option value="1.5">1.5x</option>
+      <option value="2">2x</option>
+    </select>
+  </div>
+</div>
+
+<script>
+// ── CSV Parsing ─────────────────────────────────────────
+function parseDeltaCSV(text) {
+  const lines = text.replace(/\r\n/g, '\n').trim().split('\n');
+  // Skip header, deduplicate by time (last value wins)
+  const map = new Map();
+  for (let i = 1; i < lines.length; i++) {
+    const parts = lines[i].split(',');
+    if (parts.length < 2) continue;
+    const t = parseFloat(parts[0]);
+    const d = parseFloat(parts[1]);
+    if (!isNaN(t) && !isNaN(d)) map.set(t, d);
+  }
+  const sorted = [...map.entries()].sort((a, b) => a[0] - b[0]);
+  return {
+    times: new Float64Array(sorted.map(e => e[0])),
+    deltas: new Float64Array(sorted.map(e => e[1])),
+  };
+}
+window.parseDeltaCSV = parseDeltaCSV;
+
+// ── Interpolation (matches np.interp behavior) ─────────
+function interpDelta(t, times, deltas) {
+  const n = times.length;
+  if (n === 0) return 0;
+  if (t <= times[0]) return deltas[0];
+  if (t >= times[n - 1]) return deltas[n - 1];
+  // Binary search for right bracket
+  let lo = 0, hi = n - 1;
+  while (lo < hi - 1) {
+    const mid = (lo + hi) >> 1;
+    if (times[mid] <= t) lo = mid; else hi = mid;
+  }
+  const frac = (t - times[lo]) / (times[hi] - times[lo]);
+  return deltas[lo] + frac * (deltas[hi] - deltas[lo]);
+}
+window.interpDelta = interpDelta;
+
+// ── State ───────────────────────────────────────────────
+let deltaTimes = null, deltaDeltas = null;
+let animId = null;
+let isScrubbing = false;
+
+const vid1 = document.getElementById('vid1');
+const vid2 = document.getElementById('vid2');
+const setupPanel = document.getElementById('setup-panel');
+const playerPanel = document.getElementById('player-panel');
+const playBtn = document.getElementById('play-btn');
+const scrubBar = document.getElementById('scrub-bar');
+const timeDisplay = document.getElementById('time-display');
+const speedSelect = document.getElementById('speed-select');
+const deltaOverlay = document.getElementById('delta-overlay');
+const deltaGraph = document.getElementById('delta-graph');
+const graphCtx = deltaGraph.getContext('2d');
+
+// ── File loading ────────────────────────────────────────
+let loadedVid1 = false, loadedVid2 = false, loadedCSV = false;
+
+function checkAllLoaded() {
+  if (loadedVid1 && loadedVid2 && loadedCSV) {
+    setupPanel.style.display = 'none';
+    playerPanel.classList.add('active');
+    updateDeltaDisplay(0);
+    // Need a frame for the canvas to get its layout dimensions
+    requestAnimationFrame(() => initGraph());
+  }
+}
+
+document.getElementById('input-vid1').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  vid1.src = URL.createObjectURL(file);
+  document.getElementById('check-vid1').classList.add('done');
+  vid1.addEventListener('loadedmetadata', () => { loadedVid1 = true; checkAllLoaded(); }, { once: true });
+});
+
+document.getElementById('input-vid2').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  vid2.src = URL.createObjectURL(file);
+  document.getElementById('check-vid2').classList.add('done');
+  vid2.addEventListener('loadedmetadata', () => { loadedVid2 = true; checkAllLoaded(); }, { once: true });
+});
+
+document.getElementById('input-csv').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const parsed = parseDeltaCSV(reader.result);
+    deltaTimes = parsed.times;
+    deltaDeltas = parsed.deltas;
+    document.getElementById('check-csv').classList.add('done');
+    loadedCSV = true;
+    checkAllLoaded();
+  };
+  reader.readAsText(file);
+});
+
+// ── Formatting ──────────────────────────────────────────
+function fmtTime(s) {
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return m + ':' + String(sec).padStart(2, '0');
+}
+
+function updateDeltaDisplay(t) {
+  if (!deltaTimes) return;
+  const d = interpDelta(t, deltaTimes, deltaDeltas);
+  const sign = d >= 0 ? '+' : '';
+  deltaOverlay.textContent = sign + d.toFixed(2) + 's';
+  deltaOverlay.className = d > 0.005 ? 'positive' : d < -0.005 ? 'negative' : 'zero';
+}
+
+// ── Delta graph ─────────────────────────────────────────
+// Pre-rendered curve image (redrawn only when CSV loads or canvas resizes).
+// Playhead drawn each frame on top.
+let graphImage = null;  // cached ImageData of the curve
+
+function initGraph() {
+  // Size canvas to CSS pixel dimensions at devicePixelRatio
+  const rect = deltaGraph.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  deltaGraph.width = rect.width * dpr;
+  deltaGraph.height = rect.height * dpr;
+  graphCtx.scale(dpr, dpr);
+  drawGraphCurve(rect.width, rect.height);
+  graphImage = graphCtx.getImageData(0, 0, deltaGraph.width, deltaGraph.height);
+  drawGraphPlayhead(0, rect.width, rect.height);
+}
+
+function drawGraphCurve(w, h) {
+  const n = deltaTimes.length;
+  if (n === 0) return;
+  const tMin = deltaTimes[0], tMax = deltaTimes[n - 1];
+  let dMin = Infinity, dMax = -Infinity;
+  for (let i = 0; i < n; i++) {
+    if (deltaDeltas[i] < dMin) dMin = deltaDeltas[i];
+    if (deltaDeltas[i] > dMax) dMax = deltaDeltas[i];
+  }
+  // Add padding so the line doesn't touch top/bottom
+  const dRange = (dMax - dMin) || 1;
+  dMin -= dRange * 0.15;
+  dMax += dRange * 0.15;
+
+  const pad = { top: 4, bottom: 14, left: 0, right: 0 };
+  const pw = w - pad.left - pad.right;
+  const ph = h - pad.top - pad.bottom;
+
+  // Background
+  graphCtx.fillStyle = '#1a1a1a';
+  graphCtx.fillRect(0, 0, w, h);
+
+  // Zero line if it's in range
+  if (dMin < 0 && dMax > 0) {
+    const zy = pad.top + ph * (1 - (0 - dMin) / (dMax - dMin));
+    graphCtx.strokeStyle = '#444';
+    graphCtx.lineWidth = 1;
+    graphCtx.setLineDash([4, 4]);
+    graphCtx.beginPath();
+    graphCtx.moveTo(pad.left, zy);
+    graphCtx.lineTo(pad.left + pw, zy);
+    graphCtx.stroke();
+    graphCtx.setLineDash([]);
+  }
+
+  // Delta curve — sample at pixel resolution for smoothness
+  const steps = Math.max(pw, 1);
+  graphCtx.beginPath();
+  for (let i = 0; i <= steps; i++) {
+    const frac = i / steps;
+    const t = tMin + frac * (tMax - tMin);
+    const d = interpDelta(t, deltaTimes, deltaDeltas);
+    const x = pad.left + frac * pw;
+    const y = pad.top + ph * (1 - (d - dMin) / (dMax - dMin));
+    if (i === 0) graphCtx.moveTo(x, y); else graphCtx.lineTo(x, y);
+  }
+  graphCtx.strokeStyle = '#6a9fdd';
+  graphCtx.lineWidth = 1.5;
+  graphCtx.stroke();
+
+  // Y-axis labels (min/max delta)
+  graphCtx.fillStyle = '#777';
+  graphCtx.font = '10px monospace';
+  graphCtx.textAlign = 'left';
+  graphCtx.fillText((dMax + dRange * 0.15).toFixed(1) + 's', 3, pad.top + 9);
+  graphCtx.fillText((dMin + dRange * 0.15).toFixed(1) + 's', 3, h - 2);
+}
+
+function drawGraphPlayhead(t, w, h) {
+  if (!graphImage) return;
+  // Restore cached curve
+  graphCtx.putImageData(graphImage, 0, 0);
+  // Reset transform after putImageData (which ignores transform)
+  const dpr = window.devicePixelRatio || 1;
+  graphCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const n = deltaTimes.length;
+  if (n === 0) return;
+  const tMin = deltaTimes[0], tMax = deltaTimes[n - 1];
+  const tRange = tMax - tMin || 1;
+  // Use vid2 duration if available and larger, so playhead spans full video
+  const duration = vid2.duration || tMax;
+  const frac = duration > 0 ? t / duration : 0;
+  // Map to the curve's x range (which spans tMin..tMax)
+  const curveFrac = (t - tMin) / tRange;
+  const x = Math.max(0, Math.min(w, curveFrac * w));
+
+  // Vertical playhead line
+  graphCtx.strokeStyle = '#fff';
+  graphCtx.lineWidth = 1.5;
+  graphCtx.beginPath();
+  graphCtx.moveTo(x, 0);
+  graphCtx.lineTo(x, h);
+  graphCtx.stroke();
+}
+
+function updateGraph(t) {
+  if (!graphImage) return;
+  const rect = deltaGraph.getBoundingClientRect();
+  drawGraphPlayhead(t, rect.width, rect.height);
+}
+
+// ── Sync engine (PLL-style) ─────────────────────────────
+// Both videos play normally. We adjust vid1's playbackRate to
+// gradually correct small drift, and hard-seek only for large drift.
+// This avoids the keyframe-only jerkiness of constant seeking.
+const DRIFT_SEEK_THRESHOLD = 0.5;   // hard seek if >500ms off
+const DRIFT_RATE_THRESHOLD = 0.03;  // nudge rate if >30ms off
+const RATE_GAIN = 2.0;              // proportional gain for rate correction
+
+function syncLoop() {
+  if (!vid2.paused && !isScrubbing) {
+    const t = vid2.currentTime;
+    const delta = interpDelta(t, deltaTimes, deltaDeltas);
+    const target = Math.max(0, Math.min(vid1.duration || 0, t + delta));
+    const drift = vid1.currentTime - target;
+    const baseRate = vid2.playbackRate;
+
+    if (Math.abs(drift) > DRIFT_SEEK_THRESHOLD) {
+      // Large drift — hard seek (unavoidable on scrub/skip)
+      vid1.currentTime = target;
+      vid1.playbackRate = baseRate;
+    } else if (Math.abs(drift) > DRIFT_RATE_THRESHOLD) {
+      // Small drift — nudge playback rate to converge
+      // If vid1 is ahead (drift>0), slow down; if behind, speed up
+      const correction = -drift * RATE_GAIN;
+      // Clamp correction so rate stays in reasonable range
+      const clampedRate = Math.max(0.25, Math.min(4.0, baseRate + correction));
+      vid1.playbackRate = clampedRate;
+    } else {
+      // In sync — match base rate
+      vid1.playbackRate = baseRate;
+    }
+
+    updateDeltaDisplay(t);
+    updateGraph(t);
+    if (vid2.duration) {
+      scrubBar.value = Math.round((t / vid2.duration) * 1000);
+    }
+    timeDisplay.textContent = fmtTime(t) + ' / ' + fmtTime(vid2.duration || 0);
+  }
+  animId = requestAnimationFrame(syncLoop);
+}
+
+// Snap vid1 to exact synced position (safe when paused — browser decodes to precise frame)
+function seekVid1ToSync() {
+  const t = vid2.currentTime;
+  const delta = interpDelta(t, deltaTimes, deltaDeltas);
+  vid1.currentTime = Math.max(0, Math.min(vid1.duration || 0, t + delta));
+  updateDeltaDisplay(t);
+  updateGraph(t);
+}
+
+// ── Controls ────────────────────────────────────────────
+function togglePlay() {
+  if (vid2.paused) {
+    seekVid1ToSync();
+    vid1.playbackRate = parseFloat(speedSelect.value);
+    vid2.play();
+    vid1.play();
+    playBtn.innerHTML = '&#9646;&#9646;';
+    if (!animId) animId = requestAnimationFrame(syncLoop);
+  } else {
+    vid2.pause();
+    vid1.pause();
+    // Snap vid1 to exact synced frame now that we're paused
+    seekVid1ToSync();
+    playBtn.innerHTML = '&#9654;';
+  }
+}
+
+playBtn.addEventListener('click', togglePlay);
+
+speedSelect.addEventListener('change', () => {
+  const rate = parseFloat(speedSelect.value);
+  vid2.playbackRate = rate;
+  vid1.playbackRate = rate;
+});
+
+// Scrub bar
+scrubBar.addEventListener('input', () => {
+  isScrubbing = true;
+  const frac = parseInt(scrubBar.value) / 1000;
+  vid2.currentTime = frac * (vid2.duration || 0);
+  seekVid1ToSync();
+  timeDisplay.textContent = fmtTime(vid2.currentTime) + ' / ' + fmtTime(vid2.duration || 0);
+});
+scrubBar.addEventListener('change', () => { isScrubbing = false; });
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  // Don't intercept when editing labels
+  if (e.target.getAttribute('contenteditable') === 'true') return;
+  if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+  if (e.code === 'ArrowLeft') {
+    e.preventDefault();
+    vid2.currentTime = Math.max(0, vid2.currentTime - 5);
+    seekVid1ToSync();
+  }
+  if (e.code === 'ArrowRight') {
+    e.preventDefault();
+    vid2.currentTime = Math.min(vid2.duration || 0, vid2.currentTime + 5);
+    seekVid1ToSync();
+  }
+});
+
+// Clean up on vid2 ended
+vid2.addEventListener('ended', () => {
+  vid1.pause();
+  playBtn.innerHTML = '&#9654;';
+});
+
+// ── Server bootstrap ─────────────────────────────────────
+(async function serverBootstrap() {
+  try {
+    const r = await fetch('/api/status');
+    if (!r.ok) return; // 404 from http.server — stay in file-input mode
+    const data = await r.json();
+
+    if (data.ready) {
+      // Mode C: results are ready — load from server
+      loadResultsFromServer();
+    } else if (data.mode === 'webapp') {
+      // Mode D: show upload UI
+      showUploadUI();
+    }
+  } catch (e) {
+    // Network error or no server — silently stay in file-input mode
+  }
+})();
+
+function loadResultsFromServer() {
+  vid1.src = '/api/video/1';
+  vid2.src = '/api/video/2';
+
+  // These elements may have been destroyed by showUploadUI() replacing setup-panel innerHTML
+  const chk1 = document.getElementById('check-vid1');
+  const chk2 = document.getElementById('check-vid2');
+  const chkCsv = document.getElementById('check-csv');
+  if (chk1) chk1.classList.add('done');
+  if (chk2) chk2.classList.add('done');
+
+  function tryFinish() {
+    if (loadedVid1 && loadedVid2 && loadedCSV) checkAllLoaded();
+  }
+
+  vid1.addEventListener('loadedmetadata', () => { loadedVid1 = true; tryFinish(); }, { once: true });
+  vid2.addEventListener('loadedmetadata', () => { loadedVid2 = true; tryFinish(); }, { once: true });
+
+  fetch('/api/delta.csv').then(r => r.text()).then(text => {
+    const parsed = parseDeltaCSV(text);
+    deltaTimes = parsed.times;
+    deltaDeltas = parsed.deltas;
+    if (chkCsv) chkCsv.classList.add('done');
+    loadedCSV = true;
+    tryFinish();
+  });
+}
+
+function showUploadUI() {
+  const panel = document.getElementById('setup-panel');
+  panel.innerHTML = `
+    <h1>Vid-Sync</h1>
+    <div id="upload-zone" style="border:2px dashed #555; border-radius:8px; padding:2rem; margin:1rem 0; cursor:pointer; text-align:center;">
+      <p style="margin-bottom:0.5rem;">Drop 2 video files here, or click to browse</p>
+      <input type="file" id="upload-files" accept="video/*" multiple style="display:none">
+      <div id="upload-file-list" style="font-size:0.85rem; color:#aaa;"></div>
+    </div>
+    <details style="margin:0.5rem 0; text-align:left;">
+      <summary style="cursor:pointer; font-size:0.9rem;">Parameters</summary>
+      <div style="display:flex; flex-direction:column; gap:0.4rem; padding:0.5rem 0; font-size:0.85rem;">
+        <label>Sample FPS: <input type="number" id="param-fps" value="2" min="0.5" max="30" step="0.5" style="width:4rem;"></label>
+        <label>Band fraction: <input type="number" id="param-band" value="0.2" min="0.05" max="1" step="0.05" style="width:4rem;"></label>
+      </div>
+    </details>
+    <button id="run-btn" disabled style="padding:0.5rem 1.5rem; font-size:1rem; margin-top:0.5rem; cursor:pointer;">Run Analysis</button>
+    <div id="progress-area" style="display:none; margin-top:1rem; text-align:center;">
+      <div id="progress-stage" style="font-size:0.9rem; margin-bottom:0.3rem;"></div>
+      <progress id="progress-bar" max="100" value="0" style="width:80%;"></progress>
+      <div id="progress-detail" style="font-size:0.8rem; color:#aaa;"></div>
+    </div>
+  `;
+
+  const zone = document.getElementById('upload-zone');
+  const fileInput = document.getElementById('upload-files');
+  const fileList = document.getElementById('upload-file-list');
+  const runBtn = document.getElementById('run-btn');
+  let selectedFiles = [];
+
+  zone.addEventListener('click', () => fileInput.click());
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.borderColor = '#88f'; });
+  zone.addEventListener('dragleave', () => { zone.style.borderColor = '#555'; });
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.style.borderColor = '#555';
+    handleFiles(e.dataTransfer.files);
+  });
+  fileInput.addEventListener('change', () => handleFiles(fileInput.files));
+
+  function handleFiles(files) {
+    selectedFiles = Array.from(files).slice(0, 2);
+    fileList.textContent = selectedFiles.map(f => f.name).join(', ');
+    runBtn.disabled = selectedFiles.length < 2;
+  }
+
+  runBtn.addEventListener('click', async () => {
+    if (selectedFiles.length < 2) return;
+    runBtn.disabled = true;
+    runBtn.textContent = 'Uploading...';
+
+    const form = new FormData();
+    form.append('files', selectedFiles[0]);
+    form.append('files', selectedFiles[1]);
+
+    const uploadRes = await fetch('/api/upload', { method: 'POST', body: form });
+    const { job_id } = await uploadRes.json();
+
+    // Start analysis with params
+    const params = {
+      sample_fps: parseFloat(document.getElementById('param-fps').value) || 2,
+      band_fraction: parseFloat(document.getElementById('param-band').value) || 0.2,
+    };
+    await fetch(`/api/run/${job_id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+
+    // Show progress
+    const progressArea = document.getElementById('progress-area');
+    const progressBar = document.getElementById('progress-bar');
+    const progressStage = document.getElementById('progress-stage');
+    const progressDetail = document.getElementById('progress-detail');
+    progressArea.style.display = 'block';
+    runBtn.textContent = 'Running...';
+
+    // Connect WebSocket for progress
+    const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${wsProto}//${location.host}/api/ws/${job_id}`);
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      progressStage.textContent = msg.stage.replace(/_/g, ' ');
+      progressBar.value = msg.percent || 0;
+      if (msg.frames && msg.total) {
+        progressDetail.textContent = `${msg.frames} / ${msg.total} frames`;
+      }
+      if (msg.stage === 'complete') {
+        ws.close();
+        loadResultsFromServer();
+      }
+    };
+    ws.onerror = () => {
+      progressStage.textContent = 'Connection error';
+    };
+  });
+}
+</script>
+
+</body>
+</html>

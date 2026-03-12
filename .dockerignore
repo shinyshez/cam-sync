@@ -1,0 +1,14 @@
+venv/
+venv312/
+__pycache__/
+*.mp4
+*.jpg
+*.jpeg
+*.png
+models/
+llama.cpp/
+output/
+node_modules/
+test-results/
+.claude/
+*.jsonl
