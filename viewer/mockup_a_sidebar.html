@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup A — Sidebar Track Manager</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #111; color: #eee; font-family: system-ui, sans-serif;
+    display: flex; height: 100vh; overflow: hidden;
+  }
+
+  /* ── Sidebar ─────────────────────────────────── */
+  #sidebar {
+    width: 240px; min-width: 240px;
+    background: #1a1a1a; border-right: 1px solid #333;
+    display: flex; flex-direction: column;
+    overflow-y: auto;
+  }
+  #sidebar h2 {
+    font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em;
+    color: #888; padding: 0.75rem 0.75rem 0.4rem; border-bottom: 1px solid #333;
+  }
+
+  .track-group { border-bottom: 1px solid #282828; }
+  .track-header {
+    display: flex; align-items: center; gap: 0.4rem;
+    padding: 0.5rem 0.75rem; cursor: pointer; font-size: 0.85rem;
+    font-weight: 600; user-select: none;
+  }
+  .track-header:hover { background: #222; }
+  .track-header .arrow { font-size: 0.65rem; transition: transform 0.15s; }
+  .track-header .arrow.open { transform: rotate(90deg); }
+  .track-count {
+    margin-left: auto; font-size: 0.7rem; color: #666;
+    background: #252525; padding: 0.1rem 0.4rem; border-radius: 8px;
+  }
+
+  .track-videos { padding: 0.2rem 0; }
+  .track-videos.collapsed { display: none; }
+
+  .vid-item {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.35rem 0.75rem 0.35rem 1.4rem;
+    font-size: 0.8rem; cursor: pointer; position: relative;
+  }
+  .vid-item:hover { background: #222; }
+  .vid-item.selected { background: #1a2a3a; }
+  .vid-item input[type="checkbox"] {
+    accent-color: #5a9; width: 14px; height: 14px; cursor: pointer;
+  }
+  .vid-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .vid-badge {
+    font-size: 0.65rem; padding: 0.1rem 0.35rem; border-radius: 3px;
+    font-weight: 600; white-space: nowrap;
+  }
+  .vid-badge.bench { background: #2a3a1a; color: #8c4; }
+  .vid-badge.positive { background: #1a3a1a; color: #4caf50; }
+  .vid-badge.negative { background: #3a1a1a; color: #ef5350; }
+  .vid-badge.pending { background: #2a2a1a; color: #aa8; }
+
+  .add-track-btn {
+    margin: 0.75rem; padding: 0.4rem; border: 1px dashed #444;
+    border-radius: 6px; background: none; color: #888; cursor: pointer;
+    font-size: 0.8rem; text-align: center;
+  }
+  .add-track-btn:hover { border-color: #888; color: #ccc; }
+
+  .drop-zone {
+    margin: 0.3rem 0.75rem 0.5rem;
+    padding: 0.6rem; border: 1px dashed #444; border-radius: 6px;
+    font-size: 0.7rem; color: #666; text-align: center; cursor: pointer;
+  }
+  .drop-zone:hover { border-color: #888; color: #aaa; }
+
+  /* ── Main area ───────────────────────────────── */
+  #main {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; overflow-y: auto; padding: 1rem;
+  }
+
+  .pair-label {
+    font-size: 0.85rem; color: #888; margin-bottom: 0.5rem;
+  }
+
+  .video-container {
+    position: relative; width: 100%; max-width: 720px;
+    background: #000; border-radius: 6px; overflow: hidden;
+  }
+  .video-container video {
+    width: 100%; display: block; aspect-ratio: 16/9;
+    background: #000; object-fit: contain;
+  }
+  .rider-label {
+    position: absolute; top: 0.4rem; left: 0.6rem;
+    background: rgba(0,0,0,0.55); color: #fff;
+    padding: 0.15rem 0.5rem; border-radius: 3px;
+    font-size: 0.8rem;
+  }
+  .bench-tag {
+    position: absolute; top: 0.4rem; right: 0.6rem;
+    background: rgba(140,204,80,0.2); color: #8c4;
+    padding: 0.1rem 0.4rem; border-radius: 3px;
+    font-size: 0.65rem; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  #delta-overlay {
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-size: 1.1rem; font-weight: 600;
+    padding: 0.2rem 0.75rem; border-radius: 999px;
+    margin: 0.4rem 0; text-align: center;
+    min-width: 7rem;
+  }
+  #delta-overlay.positive { background: #1a3a1a; color: #4caf50; }
+  #delta-overlay.negative { background: #3a1a1a; color: #ef5350; }
+
+  #delta-graph {
+    width: 100%; max-width: 720px; height: 48px;
+    background: #1a1a1a; border-radius: 4px; margin-top: 0.3rem;
+  }
+
+  #controls {
+    display: flex; align-items: center; gap: 0.6rem;
+    width: 100%; max-width: 720px; padding: 0.5rem 0;
+  }
+  #play-btn {
+    background: #333; color: #eee; border: 1px solid #555;
+    border-radius: 4px; padding: 0.3rem 0.8rem; cursor: pointer;
+    font-size: 0.9rem; min-width: 3rem;
+  }
+  #play-btn:hover { background: #444; }
+  #scrub-bar { flex: 1; min-width: 120px; cursor: pointer; accent-color: #5a9; }
+  #time-display { font-family: monospace; font-size: 0.8rem; white-space: nowrap; color: #aaa; }
+  #speed-select {
+    background: #333; color: #eee; border: 1px solid #555;
+    border-radius: 4px; padding: 0.2rem 0.3rem; font-size: 0.8rem;
+  }
+
+  .empty-state {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; flex: 1; color: #555; gap: 0.5rem;
+    font-size: 0.9rem;
+  }
+  .empty-state .icon { font-size: 2.5rem; opacity: 0.3; }
+</style>
+</head>
+<body>
+
+<!-- ── Sidebar ──────────────────────────────────── -->
+<div id="sidebar">
+  <h2>Tracks</h2>
+
+  <!-- Track 1 -->
+  <div class="track-group">
+    <div class="track-header" onclick="toggleTrack(this)">
+      <span class="arrow open">&#9654;</span>
+      Laguna Seca GP
+      <span class="track-count">4 videos</span>
+    </div>
+    <div class="track-videos" id="track-laguna">
+      <div class="vid-item selected">
+        <input type="checkbox" checked>
+        <span class="vid-name">lap3_main.mp4</span>
+        <span class="vid-badge bench">BENCH</span>
+      </div>
+      <div class="vid-item selected">
+        <input type="checkbox" checked>
+        <span class="vid-name">lap7_chase.mp4</span>
+        <span class="vid-badge positive">+0.34s</span>
+      </div>
+      <div class="vid-item">
+        <input type="checkbox">
+        <span class="vid-name">lap12_onboard.mp4</span>
+        <span class="vid-badge negative">-1.02s</span>
+      </div>
+      <div class="vid-item">
+        <input type="checkbox">
+        <span class="vid-name">lap15.mp4</span>
+        <span class="vid-badge pending">pending</span>
+      </div>
+      <div class="drop-zone">+ Drop videos here</div>
+    </div>
+  </div>
+
+  <!-- Track 2 -->
+  <div class="track-group">
+    <div class="track-header" onclick="toggleTrack(this)">
+      <span class="arrow">&#9654;</span>
+      Sonoma Raceway
+      <span class="track-count">2 videos</span>
+    </div>
+    <div class="track-videos collapsed">
+      <div class="vid-item">
+        <input type="checkbox">
+        <span class="vid-name">session1_cam1.mp4</span>
+        <span class="vid-badge bench">BENCH</span>
+      </div>
+      <div class="vid-item">
+        <input type="checkbox">
+        <span class="vid-name">session1_cam2.mp4</span>
+        <span class="vid-badge positive">+0.12s</span>
+      </div>
+      <div class="drop-zone">+ Drop videos here</div>
+    </div>
+  </div>
+
+  <!-- Track 3 -->
+  <div class="track-group">
+    <div class="track-header" onclick="toggleTrack(this)">
+      <span class="arrow">&#9654;</span>
+      Thunderhill
+      <span class="track-count">0 videos</span>
+    </div>
+    <div class="track-videos collapsed">
+      <div class="drop-zone">+ Drop videos here</div>
+    </div>
+  </div>
+
+  <button class="add-track-btn">+ New Track</button>
+</div>
+
+<!-- ── Main area ───────────────────────────────── -->
+<div id="main">
+  <div class="pair-label">Laguna Seca GP &mdash; lap3_main.mp4 vs lap7_chase.mp4</div>
+
+  <div class="video-container">
+    <video muted playsinline></video>
+    <div class="rider-label" contenteditable="true">Rider 1</div>
+    <div class="bench-tag">benchmark</div>
+  </div>
+
+  <div id="delta-overlay" class="positive">+0.34s</div>
+
+  <div class="video-container">
+    <video muted playsinline></video>
+    <div class="rider-label" contenteditable="true">Rider 2</div>
+  </div>
+
+  <canvas id="delta-graph"></canvas>
+
+  <div id="controls">
+    <button id="play-btn">&#9654;</button>
+    <input type="range" id="scrub-bar" min="0" max="1000" value="320" step="1">
+    <span id="time-display">1:23 / 3:45</span>
+    <select id="speed-select">
+      <option value="0.25">0.25x</option>
+      <option value="0.5">0.5x</option>
+      <option value="1" selected>1x</option>
+      <option value="1.5">1.5x</option>
+      <option value="2">2x</option>
+    </select>
+  </div>
+</div>
+
+<script>
+function toggleTrack(header) {
+  const arrow = header.querySelector('.arrow');
+  const videos = header.nextElementSibling;
+  arrow.classList.toggle('open');
+  videos.classList.toggle('collapsed');
+}
+
+// Draw a fake delta graph
+const canvas = document.getElementById('delta-graph');
+const rect = canvas.parentElement.getBoundingClientRect();
+canvas.width = 720; canvas.height = 48;
+const ctx = canvas.getContext('2d');
+ctx.fillStyle = '#1a1a1a'; ctx.fillRect(0, 0, 720, 48);
+// fake curve
+ctx.beginPath();
+ctx.moveTo(0, 24);
+for (let x = 0; x <= 720; x++) {
+  const y = 24 + Math.sin(x / 60) * 12 + Math.sin(x / 23) * 5;
+  ctx.lineTo(x, y);
+}
+ctx.strokeStyle = '#6a9fdd'; ctx.lineWidth = 1.5; ctx.stroke();
+// zero line
+ctx.strokeStyle = '#444'; ctx.lineWidth = 1; ctx.setLineDash([4,4]);
+ctx.beginPath(); ctx.moveTo(0, 24); ctx.lineTo(720, 24); ctx.stroke();
+ctx.setLineDash([]);
+// playhead
+const px = 720 * 0.32;
+ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
+ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, 48); ctx.stroke();
+</script>
+</body>
+</html>
